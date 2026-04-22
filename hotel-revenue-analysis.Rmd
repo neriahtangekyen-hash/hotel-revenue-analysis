@@ -1,0 +1,182 @@
+---
+title: "hotel-revenue-analysis"
+output: pdf_document
+date: "2026-04-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+```{r}
+df <- read_csv("hotel_bookings.csv")
+df
+```
+------ EDA ---------
+```{r}
+# 1. Basic structure
+glimpse(df)
+summary(df$adr)
+summary(df$stays_in_weekend_nights + df$stays_in_week_nights)
+
+# 2. Cancellation rate — know what you're dropping
+df %>% count(is_canceled) %>% mutate(pct = n/sum(n)*100)
+
+# 3. ADR sanity check — there are known zero/outlier ADR rows
+df %>% filter(adr <= 0 | adr > 5000) %>% nrow()
+
+# 4. Date range
+df %>% summarise(min(arrival_date_year), max(arrival_date_year))
+
+# 5. Market segments present
+df %>% count(market_segment, sort = TRUE)
+
+# 6. Missing values in columns you'll use
+df %>% select(adr, market_segment, hotel, is_canceled,
+              stays_in_weekend_nights, stays_in_week_nights,
+              arrival_date_year, arrival_date_month,
+              arrival_date_day_of_month) %>%
+  summarise(across(everything(), ~sum(is.na(.))))
+
+```
+----Clean Data------
+```{r}
+#keep only non-cancelled bookings 
+df_clean <- df %>% 
+    filter(is_canceled == 0) %>%
+  mutate(
+    # Build a proper arrival date
+    arrival_date = as.Date(paste(
+      arrival_date_year,
+      arrival_date_month,
+      arrival_date_day_of_month
+    ), format = "%Y %B %d"),
+    
+    # Total revenue proxy (ADR × nights stayed)
+    total_nights = stays_in_weekend_nights + stays_in_week_nights,
+    total_revenue = adr * total_nights,
+    
+    # Rooms available proxy — not in dataset, use constant per hotel type
+    # City Hotel capacity ~300, Resort Hotel ~226 (from the paper)
+    rooms_available = if_else(hotel == "City Hotel", 300, 226),
+    
+    # Segment simplification
+    segment = market_segment
+  ) %>%
+  filter(total_nights > 0, adr > 0)
+
+df_clean
+```
+
+----- Calculate KPI -----
+```{r}
+# Daily aggregation
+daily <- df_clean %>%
+  group_by(hotel, arrival_date) %>%
+  summarise(
+    rooms_sold = n(),                        # bookings as proxy for rooms sold
+    total_revenue = sum(total_revenue),
+    adr = mean(adr),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    rooms_available = if_else(hotel == "City Hotel", 300, 226),
+    occupancy_rate = rooms_sold / rooms_available,
+    revpar = occupancy_rate * adr
+  )
+daily
+
+# Monthly summary (cleaner for charts)
+monthly <- daily %>%
+  mutate(month = floor_date(arrival_date, "month")) %>%
+  group_by(hotel, month) %>%
+  summarise(
+    avg_occupancy = mean(occupancy_rate),
+    avg_adr = mean(adr),
+    avg_revpar = mean(revpar),
+    total_revenue = sum(total_revenue),
+    .groups = "drop"
+  )
+monthly
+
+# Segment summary
+segment <- df_clean %>%
+  group_by(hotel, segment) %>%
+  summarise(
+    avg_adr = mean(adr),
+    bookings = n(),
+    total_revenue = sum(total_revenue),
+    .groups = "drop"
+  ) %>%
+  group_by(hotel) %>%
+  mutate(revenue_share = total_revenue / sum(total_revenue) * 100)
+segment
+```
+```{r}
+# 1. RevPAR range
+monthly %>% summarise(min_revpar = min(avg_revpar), max_revpar = max(avg_revpar))
+
+# 2. ADR by segment (City Hotel top 3)
+segment %>% filter(hotel == "City Hotel") %>% arrange(desc(avg_adr)) %>% head(3)
+
+# 3. Overall average occupancy
+daily %>% filter(hotel == "City Hotel") %>% summarise(mean(occupancy_rate))
+
+# 4. Average ADR overall
+df_clean %>% filter(hotel == "City Hotel") %>% summarise(mean(adr))
+```
+----- RevPAR trend over time -----
+```{r}
+ggplot(monthly, aes(x = month, y = avg_revpar, colour = hotel)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::dollar_format(prefix = "€")) +
+  scale_colour_manual(values = c("#1a3a5c", "#c8a951")) +
+  labs(
+    title = "RevPAR Trend by Hotel Type",
+    subtitle = "Monthly average, non-cancelled bookings only",
+    x = NULL, y = "RevPAR (€)", colour = "Hotel Type",
+    caption = "Source: Hotel Booking Demand dataset (Antonio et al., 2019)"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+----- ADR by market segment ----
+```{r}
+segment %>%
+  filter(hotel == "City Hotel") %>%
+  ggplot(aes(x = reorder(segment, avg_adr), y = avg_adr, fill = revenue_share)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(revenue_share, 1), "% rev share")),
+            hjust = 1.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_gradient(low = "#c8e6ff", high = "#1a3a5c") +
+  labs(
+    title = "ADR and Revenue Share by Market Segment",
+    subtitle = "City Hotel — non-cancelled bookings",
+    x = NULL, y = "Average Daily Rate (€)", fill = "Revenue Share (%)"
+  ) +
+  theme_minimal(base_size = 13)
+```
+----- Occupancy vs ADR yield curve ------
+```{r}
+daily %>%
+  filter(hotel == "City Hotel", occupancy_rate <= 1) %>%
+  ggplot(aes(x = occupancy_rate, y = adr)) +
+  geom_point(alpha = 0.3, colour = "#1a3a5c", size = 1.5) +
+  geom_smooth(method = "lm", colour = "#c8a951", linewidth = 1.2) +
+  scale_x_continuous(labels = scales::percent) +
+  labs(
+    title = "Yield Curve: Occupancy Rate vs ADR",
+    subtitle = "City Hotel — each point is one day",
+    x = "Occupancy Rate", y = "ADR (€)"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+
