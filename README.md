@@ -12,19 +12,26 @@ KPIs and applies yield analysis to identify revenue optimisation opportunities.
 - Occupancy Rate (approximated via booking count / estimated capacity)
 
 ### Key Findings
+
 1. **OTA dependency risk:** Online TA accounts for 60.9% of revenue at 
    an ADR of ~€110, while Direct bookings achieve ~€125 ADR at only 11.5% 
    share — suggesting significant net revenue upside from shifting volume 
    to direct channels (estimated 15–20% commission saving on migrated bookings).
 
+![ADR by Segment](adr_segment.png)
+
 2. **RevPAR trend:** City Hotel RevPAR grew from ~€10 in mid-2015 to ~€35 
    by mid-2017, with clear seasonality peaks in mid-year months consistent 
    with summer demand patterns.
+
+![RevPAR Trend](revpar_trend.png)
 
 3. **Pricing not demand-linked:** The yield curve shows a positive but 
    weak occupancy-ADR relationship (wide scatter around trend line), 
    suggesting rates are not being dynamically adjusted to occupancy levels — 
    a yield management gap.
+
+![Yield Curve](yield_curve.png)
 
 ### Methodology Note
 Occupancy rate is approximated using daily booking count divided by 
